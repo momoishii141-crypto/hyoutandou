@@ -136,6 +136,18 @@
 
         .btn-submit:disabled { background: #cbd5e1; cursor: not-allowed; }
 
+        /* 売り切れ警告時のボタン強調アニメーション */
+        .btn-submit.alert-sell {
+            background: #dc2626 !important;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.03); }
+            100% { transform: scale(1); }
+        }
+
         table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 12px; }
         th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid #f1f5f9; }
         th { background: #f8fafc; color: #64748b; }
@@ -176,7 +188,7 @@
 <div class="container">
     <header>
         <h1>BASE 一括在庫管理</h1>
-        <div style="font-size: 0.8rem; color: #059669; font-weight: bold;">● 安全設計（アラート・履歴追加版）</div>
+        <div style="font-size: 0.8rem; color: #059669; font-weight: bold;">● 売り切れ放置アラート搭載版</div>
     </header>
 
     <!-- モード選択 -->
@@ -255,9 +267,7 @@
                     <th>ステータス</th>
                 </tr>
             </thead>
-            <tbody id="executedTableBody">
-                <!-- 処理完了品がここにたまります -->
-            </tbody>
+            <tbody id="executedTableBody"></tbody>
         </table>
     </div>
 </div>
@@ -272,9 +282,13 @@
         'reserve':     '⑥ 取り置き (非公開)'
     };
 
+    // 売り切れ商品が放置された際のアラートタイマー時間 (ミリ秒) -> 10秒に設定
+    const ALERT_TIMEOUT_MS = 10000; 
+
     let currentMode = 'takeout';
     let scanQueue = [];
-    let executedHistory = []; // 実行済み履歴データ
+    let executedHistory = [];
+    let sellAlertTimer = null; // 放置判定用タイマー
 
     const barcodeInput = document.getElementById('barcodeInput');
 
@@ -288,7 +302,6 @@
         barcodeInput.focus();
     }
 
-    // スキャン/手入力時
     barcodeInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
             const code = this.value.trim();
@@ -310,17 +323,16 @@
         } else {
             scanQueue.push({ code: code, mode: mode });
             renderTable();
+            resetSellTimer(); // リスト変更時にタイマー再設定
         }
     }
 
-    // 送信待ちリスト描画
     function renderTable() {
         const tbody = document.getElementById('queueTableBody');
         tbody.innerHTML = '';
         
         scanQueue.forEach((item, index) => {
             const row = document.createElement('tr');
-            
             let optionsHtml = '';
             for (const [key, label] of Object.entries(MODES)) {
                 const selected = item.mode === key ? 'selected' : '';
@@ -347,43 +359,69 @@
     function updateSingleMode(index, newMode) {
         scanQueue[index].mode = newMode;
         showToast('success', `${scanQueue[index].code} の処理を「${MODES[newMode]}」に変更しました`);
+        resetSellTimer();
     }
 
-    // 単品削除（確認アラート付き）
     function removeItem(index) {
         const targetItem = scanQueue[index];
         const isConfirmed = confirm(`【確認】\n商品ID: 「${targetItem.code}」をリストから削除しますか？`);
-        
         if (isConfirmed) {
             scanQueue.splice(index, 1);
             renderTable();
             showToast('warning', `${targetItem.code} をリストから削除しました`);
+            resetSellTimer();
         }
     }
 
-    // 全削除（確認アラート付き）
     function clearQueue() {
         if (scanQueue.length === 0) return;
-        
         const isConfirmed = confirm(`【警告】\n送信待ちリスト（${scanQueue.length}件）をすべて削除して空にしますか？`);
         if (isConfirmed) {
             scanQueue = [];
             renderTable();
             showToast('warning', 'リストを空にしました');
+            resetSellTimer();
         }
     }
 
-    // 一括実行処理（確認アラート & 実行済みリストへ移動）
+    // 売り切れ放置アラートタイマーのリセットと監視
+    function resetSellTimer() {
+        clearTimeout(sellAlertTimer);
+        const execBtn = document.getElementById('execBtn');
+        execBtn.classList.remove('alert-sell');
+
+        // リスト内に「売り切れ(sell)」モードの商品が存在するかチェック
+        const hasSellItem = scanQueue.some(item => item.mode === 'sell');
+
+        if (hasSellItem) {
+            // 設定時間(例:10秒)放置されたら警告音とアニメーションを起動
+            sellAlertTimer = setTimeout(() => {
+                triggerSellAlert();
+            }, ALERT_TIMEOUT_MS);
+        }
+    }
+
+    // 売り切れ警告音とUI通知
+    function triggerSellAlert() {
+        const execBtn = document.getElementById('execBtn');
+        execBtn.classList.add('alert-sell');
+        showToast('warning', '⚠️ 【警告】売り切れ商品が実行されていません！一括実行ボタンを押してください。');
+        playWarningSound();
+    }
+
+    // 一括実行処理
     function executeBatch() {
         if (scanQueue.length === 0) return;
 
         const count = scanQueue.length;
-        const isConfirmed = confirm(`【一括実行の確認】\n全 ${count} 件の商品データをBASEへ反映（書き換え）します。\nよろしいですか？`);
+        
+        // 要求通り：「全⚫︎点実行しますか？」のダイアログメッセージ
+        const isConfirmed = confirm(`全${count}点実行しますか？`);
 
         if (isConfirmed) {
+            clearTimeout(sellAlertTimer); // タイマー停止
             const now = new Date().toLocaleTimeString();
 
-            // 実行済み履歴へデータを追加
             scanQueue.forEach(item => {
                 executedHistory.unshift({
                     time: now,
@@ -392,21 +430,19 @@
                 });
             });
 
-            // 画面の更新
             renderExecutedTable();
             scanQueue = [];
             renderTable();
+            resetSellTimer();
 
-            alert(`【完了】\n計 ${count} 件のデータをBASEへ送信完了しました！`);
-            showToast('success', `${count} 件の更新処理が完了しました。`);
+            alert(`【完了】\n全${count}点のデータをBASEへ送信完了しました！`);
+            showToast('success', `${count}件の更新処理が完了しました。`);
         }
     }
 
-    // 実行済みリストの描画
     function renderExecutedTable() {
         const tbody = document.getElementById('executedTableBody');
         tbody.innerHTML = '';
-
         executedHistory.forEach(item => {
             const row = document.createElement('tr');
             row.innerHTML = `
@@ -417,7 +453,6 @@
             `;
             tbody.appendChild(row);
         });
-
         document.getElementById('executedCount').textContent = executedHistory.length;
     }
 
@@ -425,7 +460,28 @@
         const toast = document.getElementById('toast');
         toast.className = `toast ${type}`;
         toast.textContent = msg;
-        setTimeout(() => toast.style.display = 'none', 3000);
+        setTimeout(() => toast.style.display = 'none', 4000);
+    }
+
+    // アラート音（ブッ・ブッ警告音）
+    function playWarningSound() {
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const playBeep = (delay) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(300, ctx.currentTime + delay);
+                gain.gain.setValueAtTime(0.15, ctx.currentTime + delay);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(ctx.currentTime + delay);
+                osc.stop(ctx.currentTime + delay + 0.15);
+            };
+            playBeep(0);
+            playBeep(0.2);
+            playBeep(0.4);
+        } catch (e) {}
     }
 </script>
 
