@@ -32,7 +32,7 @@
 
         header {
             display: flex;
-            justify-size: space-between;
+            justify-content: space-between;
             align-items: center;
             margin-bottom: 16px;
             padding-bottom: 12px;
@@ -159,6 +159,16 @@
         .toast { padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-weight: bold; display: none; }
         .toast.success { background: #dcfce7; color: #166534; display: block; }
         .toast.warning { background: #fef3c7; color: #92400e; display: block; }
+
+        .badge-history {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            color: white;
+            background: #475569;
+        }
     </style>
 </head>
 <body>
@@ -166,7 +176,7 @@
 <div class="container">
     <header>
         <h1>BASE 一括在庫管理</h1>
-        <div style="font-size: 0.8rem; color: #059669; font-weight: bold;">● テスト機能付き</div>
+        <div style="font-size: 0.8rem; color: #059669; font-weight: bold;">● 安全設計（アラート・履歴追加版）</div>
     </header>
 
     <!-- モード選択 -->
@@ -211,10 +221,10 @@
 
     <div id="toast" class="toast"></div>
 
-    <!-- 読み溜めリスト -->
+    <!-- 送信待ちリスト -->
     <div class="card">
         <div style="display:flex; justify-content: space-between; align-items: center;">
-            <h2 style="font-size:1rem; margin:0;">送信待ちリスト（1商品ごとの変更・削除が可能）</h2>
+            <h2 style="font-size:1rem; margin:0;">送信待ちリスト（編集・削除可能）</h2>
             <button onclick="clearQueue()" style="background:none; border:1px solid #ccc; padding:4px 8px; border-radius:4px; cursor:pointer;">リストを空にする</button>
         </div>
         <table>
@@ -227,6 +237,27 @@
                 </tr>
             </thead>
             <tbody id="queueTableBody"></tbody>
+        </table>
+    </div>
+
+    <!-- 実行済みリスト -->
+    <div class="card" style="border-top: 4px solid #16a34a;">
+        <div style="display:flex; justify-content: space-between; align-items: center;">
+            <h2 style="font-size:1rem; margin:0; color: #16a34a;">✅ 実行済みリスト（処理完了履歴）</h2>
+            <span style="font-size: 0.85rem; color: #64748b;">全 <strong id="executedCount">0</strong> 件</span>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>実行時刻</th>
+                    <th>商品ID/コード</th>
+                    <th>実行した処理</th>
+                    <th>ステータス</th>
+                </tr>
+            </thead>
+            <tbody id="executedTableBody">
+                <!-- 処理完了品がここにたまります -->
+            </tbody>
         </table>
     </div>
 </div>
@@ -243,6 +274,8 @@
 
     let currentMode = 'takeout';
     let scanQueue = [];
+    let executedHistory = []; // 実行済み履歴データ
+
     const barcodeInput = document.getElementById('barcodeInput');
 
     function selectMode(modeKey) {
@@ -255,7 +288,7 @@
         barcodeInput.focus();
     }
 
-    // 手入力/スキャン時
+    // スキャン/手入力時
     barcodeInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
             const code = this.value.trim();
@@ -266,13 +299,11 @@
         }
     });
 
-    // 試運転用ダミー追加関数
     function addDummyScan() {
         const dummyId = "KIMONO-" + Math.floor(1000 + Math.random() * 9000);
         addToList(dummyId, currentMode);
     }
 
-    // リスト追加共通関数
     function addToList(code, mode) {
         if (scanQueue.some(item => item.code === code)) {
             showToast('warning', `すでにリストに含まれています: ${code}`);
@@ -282,7 +313,7 @@
         }
     }
 
-    // リスト描画（各商品のやり直し・編集・個別削除）
+    // 送信待ちリスト描画
     function renderTable() {
         const tbody = document.getElementById('queueTableBody');
         tbody.innerHTML = '';
@@ -290,7 +321,6 @@
         scanQueue.forEach((item, index) => {
             const row = document.createElement('tr');
             
-            // モード切替のセレクトボックス作成（1商品ごとのやり直し用）
             let optionsHtml = '';
             for (const [key, label] of Object.entries(MODES)) {
                 const selected = item.mode === key ? 'selected' : '';
@@ -314,32 +344,81 @@
         document.getElementById('execBtn').disabled = scanQueue.length === 0;
     }
 
-    // 単品モード変更（やり直し）
     function updateSingleMode(index, newMode) {
         scanQueue[index].mode = newMode;
         showToast('success', `${scanQueue[index].code} の処理を「${MODES[newMode]}」に変更しました`);
     }
 
-    // 実行前の個別削除
+    // 単品削除（確認アラート付き）
     function removeItem(index) {
-        const removed = scanQueue.splice(index, 1);
-        renderTable();
-        showToast('warning', `${removed[0].code} をリストから削除しました`);
+        const targetItem = scanQueue[index];
+        const isConfirmed = confirm(`【確認】\n商品ID: 「${targetItem.code}」をリストから削除しますか？`);
+        
+        if (isConfirmed) {
+            scanQueue.splice(index, 1);
+            renderTable();
+            showToast('warning', `${targetItem.code} をリストから削除しました`);
+        }
     }
 
-    // リスト全クリア
+    // 全削除（確認アラート付き）
     function clearQueue() {
-        scanQueue = [];
-        renderTable();
+        if (scanQueue.length === 0) return;
+        
+        const isConfirmed = confirm(`【警告】\n送信待ちリスト（${scanQueue.length}件）をすべて削除して空にしますか？`);
+        if (isConfirmed) {
+            scanQueue = [];
+            renderTable();
+            showToast('warning', 'リストを空にしました');
+        }
     }
 
-    // 一括実行ボタン
+    // 一括実行処理（確認アラート & 実行済みリストへ移動）
     function executeBatch() {
         if (scanQueue.length === 0) return;
-        alert(`【送信完了】\n計 ${scanQueue.length} 点の商品データをBASEへ一括処理しました！`);
-        scanQueue = [];
-        renderTable();
-        showToast('success', '一括送信が完了しました。');
+
+        const count = scanQueue.length;
+        const isConfirmed = confirm(`【一括実行の確認】\n全 ${count} 件の商品データをBASEへ反映（書き換え）します。\nよろしいですか？`);
+
+        if (isConfirmed) {
+            const now = new Date().toLocaleTimeString();
+
+            // 実行済み履歴へデータを追加
+            scanQueue.forEach(item => {
+                executedHistory.unshift({
+                    time: now,
+                    code: item.code,
+                    modeName: MODES[item.mode]
+                });
+            });
+
+            // 画面の更新
+            renderExecutedTable();
+            scanQueue = [];
+            renderTable();
+
+            alert(`【完了】\n計 ${count} 件のデータをBASEへ送信完了しました！`);
+            showToast('success', `${count} 件の更新処理が完了しました。`);
+        }
+    }
+
+    // 実行済みリストの描画
+    function renderExecutedTable() {
+        const tbody = document.getElementById('executedTableBody');
+        tbody.innerHTML = '';
+
+        executedHistory.forEach(item => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${item.time}</td>
+                <td><strong>${item.code}</strong></td>
+                <td>${item.modeName}</td>
+                <td><span class="badge-history">完了</span></td>
+            `;
+            tbody.appendChild(row);
+        });
+
+        document.getElementById('executedCount').textContent = executedHistory.length;
     }
 
     function showToast(type, msg) {
