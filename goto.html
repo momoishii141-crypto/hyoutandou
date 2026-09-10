@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>商品ページへ移動中…</title>
+<style>
+  body { font-family: sans-serif; padding: 40px; text-align: center; }
+</style>
+</head>
+<body>
+  <div id="msg">確認中…</div>
+
+<script>
+  const GAS_URL = 'https://script.google.com/macros/s/AKfycbxe_wYQjU2ht9z38V4XiazNghIgQQKNkTr8umB1bRo6eQosIMwEOMsQiG9g8UooWDV1/exec';
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+
+  async function go() {
+    if (!code) {
+      document.getElementById('msg').textContent = 'コードが指定されていません';
+      return;
+    }
+    try {
+      const res = await fetch(`${GAS_URL}?action=lookup&code=${encodeURIComponent(code)}`);
+      const data = await res.json();
+
+      if (!data.ok) {
+        document.getElementById('msg').textContent = data.error;
+        return;
+      }
+      if (!data.baseItemId) {
+        document.getElementById('msg').innerHTML = `
+          このコード（${data.code}）にはまだBASE商品IDが紐づいていません。<br>
+          商品名: ${data.name}
+        `;
+        return;
+      }
+
+      window.location.href = `https://admin.thebase.com/shop_admin/items/edit/${data.baseItemId}`;
+    } catch (err) {
+      document.getElementById('msg').textContent = '読み込みに失敗しました';
+    }
+  }
+  go();
+</script>
+</body>
+</html>
